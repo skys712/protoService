@@ -1,0 +1,140 @@
+#!/usr/bin/env python
+# -*- encoding:utf8 -*-
+
+import os
+import sys
+import string
+import os.path as path
+from cStringIO import StringIO
+
+import google.protobuf.compiler.plugin_pb2 as plugin_pb2
+import google.protobuf.descriptor_pb2 as descriptor_pb2
+
+files_ = {}
+
+class Writer(object):
+    def __init__(self, prefix=None):
+        self.io = StringIO()
+        self.__indent = ''
+        self.__prefix = prefix
+        self.key = ''
+
+    def getvalue(self):
+        return self.io.getvalue()
+    
+    def setkey(self, key):
+        self.key = key
+
+    def getkey(self):
+        return self.key
+
+    def __enter__(self):
+        self.__indent += '    '
+        return self
+
+    def __exit__(self, type, value, trackback):
+        self.__indent = self.__indent[:-4]
+
+    def __call__(self, data):
+        self.io.write(self.__indent)
+        if self.__prefix:
+            self.io.write(self.__prefix)
+        self.io.write(data)
+
+def transfer_namespace(str):
+    return str.replace('.', '::')
+
+def gen_by_file(writer, file_name, name, platform_name, ext_name, service_list, on_name, do_name):
+    class_name = name.capitalize() + platform_name.capitalize() + 'Service'
+    template_dir = 'service_template'
+    template_file = '{0}/service.pb.{1}.t'.format(template_dir, ext_name.lower())
+    msg_dispatch_template_file = '{0}/service_{1}/message_dispatch.t'.format(template_dir, ext_name.lower())
+    on_func_template_file = '{0}/service_{1}/on_func.t'.format(template_dir, ext_name.lower())
+    do_func_template_file = '{0}/service_{1}/do_func.t'.format(template_dir, ext_name.lower())
+
+    msg_dispatch = ''
+    msg_dispatch_once = ''
+    if os.path.exists(msg_dispatch_template_file):
+        with open(msg_dispatch_template_file) as f:
+            msg_dispatch_once = f.read()
+
+        for i, v in enumerate(service_list):
+            if v[on_name] == 'NullMsg':
+                continue
+            msg_dispatch += msg_dispatch_once.format(index = i + 1, message_type = v[on_name], func_name = 'on' + v['func'] + on_name)
+
+    on_func = ''
+    if os.path.exists(on_func_template_file):
+        on_func_once = ''
+        with open(on_func_template_file) as f:
+            on_func_once = f.read()
+
+        for i, v in enumerate(service_list):
+            if v[on_name] == 'NullMsg':
+                continue
+            on_func += on_func_once.format(class_name = class_name, func_name = 'on' + v['func'] + on_name, message_type = v[on_name])
+
+    do_func = ''
+    if os.path.exists(do_func_template_file):
+        do_func_once = ''
+        with open(do_func_template_file) as f:
+            do_func_once = f.read()
+
+        for i, v in enumerate(service_list):
+            if v[do_name] == 'NullMsg':
+                continue
+            do_func += do_func_once.format(index = i + 1, class_name = class_name, func_name = 'do' + v['func'] + do_name, message_type = v[do_name])
+
+    main = ''
+    with open(template_file) as f:
+        main = f.read()
+    writer.setkey('{0}_{1}_service.pb.{2}'.format(name.lower(), platform_name.lower(), ext_name.lower()))
+    writer(main.format(file_name = file_name.lower(), class_name = class_name, platform_name = platform_name.lower(), message_dispatch_region = msg_dispatch, on_func_region = on_func, do_func_region = do_func))
+
+def code_gen_file(proto_file, env, is_gen):
+    name = path.splitext(proto_file.name)[0]
+
+    if not is_gen:
+        return
+
+    for service in proto_file.service:
+        service_list = []
+        service_name = service.name
+        for method in service.method:
+            service_list.append({'func':  method.name, 'Request': transfer_namespace(method.input_type), 'Reply': transfer_namespace(method.output_type)})
+
+        out = Writer()
+        gen_by_file(out, name, service_name, 'client', 'h', service_list, 'Reply', 'Request')
+        files_[out.getkey()] = out.getvalue()
+
+        out = Writer()
+        gen_by_file(out, name, service_name, 'client', 'cc', service_list, 'Reply', 'Request')
+        files_[out.getkey()] = out.getvalue()
+
+        out = Writer()
+        gen_by_file(out, name, service_name, 'server', 'h', service_list, 'Request', 'Reply')
+        files_[out.getkey()] = out.getvalue()
+
+        out = Writer()
+        gen_by_file(out, name, service_name, 'server', 'cc', service_list, 'Request', 'Reply')
+        files_[out.getkey()] = out.getvalue()
+
+
+def main():
+    plugin_require_bin = sys.stdin.read()
+    code_gen_req = plugin_pb2.CodeGeneratorRequest()
+    code_gen_req.ParseFromString(plugin_require_bin)
+
+    env = 1
+    for proto_file in code_gen_req.proto_file:
+        code_gen_file(proto_file, env, proto_file.name in code_gen_req.file_to_generate)
+
+    code_generated = plugin_pb2.CodeGeneratorResponse()
+    for k, v in  files_.iteritems():
+        file_desc = code_generated.file.add()
+        file_desc.name = k
+        file_desc.content = v
+        
+    sys.stdout.write(code_generated.SerializeToString())
+if __name__ == '__main__':
+    main()
