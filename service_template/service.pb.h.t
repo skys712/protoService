@@ -1,4 +1,4 @@
-#include "public/service_interface.h"
+#include "interface/service_interface.h"
 #include "{file_name}.pb.h"
 
 struct ILog;
