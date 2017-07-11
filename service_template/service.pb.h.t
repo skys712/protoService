@@ -1,4 +1,4 @@
-#include "interface/service_interface.h"
+#include "public/service_interface.h"
 #include "{file_name}.pb.h"
 
 struct ILog;
@@ -13,7 +13,7 @@ public:
 
 public:
 {on_func_region}
-private:
+
 {do_func_region}
 
 public:

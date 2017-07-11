@@ -44,7 +44,7 @@ void {class_name}::onMessage(uint32_t peerId, void *data, uint32_t size)
 {do_func_region}
 bool {class_name}::sendMsg(uint32_t peerId, uint16_t msgType, uint16_t sn, const ::google::protobuf::Message *message)
 {{
-    uint32_t packSize = sizeof(uint16_t) * 2 + message->ByteSizeLong();
+    uint32_t packSize = sizeof(uint16_t) * 2 + message->ByteSize();
     if (packSize > m_bufferSize) return false;
     *(uint16_t*)m_tempBuffer = msgType;
     *((uint16_t*)m_tempBuffer + 1) = sn;
