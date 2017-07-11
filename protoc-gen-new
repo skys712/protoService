@@ -11,6 +11,7 @@ import google.protobuf.compiler.plugin_pb2 as plugin_pb2
 import google.protobuf.descriptor_pb2 as descriptor_pb2
 
 files_ = {}
+namespace_ = ''
 
 class Writer(object):
     def __init__(self, prefix=None):
@@ -44,8 +45,13 @@ class Writer(object):
 def transfer_namespace(str):
     return str.replace('.', '::')
 
-def gen_by_file(writer, file_name, name, platform_name, ext_name, service_list, on_name, do_name):
-    class_name = name.capitalize() + platform_name.capitalize() + 'Service'
+def fix_namespace(str):
+    if (str[0] == '.'):
+        str = str[1:]
+    return str;
+
+def gen_by_file(writer, file_name, namespace, platform_name, ext_name, service_list):
+    class_name = file_name.capitalize() + platform_name.capitalize() + 'Service'
     template_dir = 'service_template'
     template_file = '{0}/service.pb.{1}.t'.format(template_dir, ext_name.lower())
     msg_dispatch_template_file = '{0}/service_{1}/message_dispatch.t'.format(template_dir, ext_name.lower())
@@ -58,10 +64,8 @@ def gen_by_file(writer, file_name, name, platform_name, ext_name, service_list, 
         with open(msg_dispatch_template_file) as f:
             msg_dispatch_once = f.read()
 
-        for i, v in enumerate(service_list):
-            if v[on_name] == 'NullMsg':
-                continue
-            msg_dispatch += msg_dispatch_once.format(index = i + 1, message_type = v[on_name], func_name = 'on' + v['func'] + on_name)
+        for i, v in enumerate(service_list['on']):
+            msg_dispatch += msg_dispatch_once.format(index = i + 1, message_type = v['message'], func_name = v['func'])
 
     on_func = ''
     if os.path.exists(on_func_template_file):
@@ -69,10 +73,8 @@ def gen_by_file(writer, file_name, name, platform_name, ext_name, service_list, 
         with open(on_func_template_file) as f:
             on_func_once = f.read()
 
-        for i, v in enumerate(service_list):
-            if v[on_name] == 'NullMsg':
-                continue
-            on_func += on_func_once.format(class_name = class_name, func_name = 'on' + v['func'] + on_name, message_type = v[on_name])
+        for i, v in enumerate(service_list['on']):
+            on_func += on_func_once.format(class_name = class_name, func_name = v['func'], message_type = v['message'])
 
     do_func = ''
     if os.path.exists(do_func_template_file):
@@ -80,16 +82,15 @@ def gen_by_file(writer, file_name, name, platform_name, ext_name, service_list, 
         with open(do_func_template_file) as f:
             do_func_once = f.read()
 
-        for i, v in enumerate(service_list):
-            if v[do_name] == 'NullMsg':
-                continue
-            do_func += do_func_once.format(index = i + 1, class_name = class_name, func_name = 'do' + v['func'] + do_name, message_type = v[do_name])
+        for i, v in enumerate(service_list['do']):
+            do_func += do_func_once.format(index = i + 1, class_name = class_name, func_name = v['func'], message_type = v['message'])
 
     main = ''
     with open(template_file) as f:
         main = f.read()
-    writer.setkey('{0}_{1}_service.pb.{2}'.format(name.lower(), platform_name.lower(), ext_name.lower()))
-    writer(main.format(file_name = file_name.lower(), class_name = class_name, platform_name = platform_name.lower(), message_dispatch_region = msg_dispatch, on_func_region = on_func, do_func_region = do_func))
+    writer.setkey('{0}_{1}_service.pb.{2}'.format(file_name.lower(), platform_name.lower(), ext_name.lower()))
+    writer(main.format(namespace = namespace.capitalize(), file_name = file_name.lower(), class_name = class_name,  \
+            platform_name = platform_name.lower(), message_dispatch_region = msg_dispatch, on_func_region = on_func, do_func_region = do_func))
 
 def code_gen_file(proto_file, env, is_gen):
     name = path.splitext(proto_file.name)[0]
@@ -97,27 +98,63 @@ def code_gen_file(proto_file, env, is_gen):
     if not is_gen:
         return
 
+    package = proto_file.package
+    server_list = {}
+    server_list['on'] = []
+    server_list['do'] = []
+
+    client_list = {}
+    client_list['on'] = []
+    client_list['do'] = []
+
+    server_list_cs = {}
+    server_list_cs['on'] = []
+    server_list_cs['do'] = []
+
+    client_list_cs = {}
+    client_list_cs['on'] = []
+    client_list_cs['do'] = []
+
     for service in proto_file.service:
-        service_list = []
         service_name = service.name
-        for method in service.method:
-            service_list.append({'func':  method.name, 'Request': transfer_namespace(method.input_type), 'Reply': transfer_namespace(method.output_type)})
+        if len(proto_file.service) == 1:
+            service_name = ""
 
-        out = Writer()
-        gen_by_file(out, name, service_name, 'client', 'h', service_list, 'Reply', 'Request')
-        files_[out.getkey()] = out.getvalue()
+        for event in service.event:
+            if bool(event.in_server):
+                server_list['on'].append({'func': 'on' + service_name + event.name, 'message': transfer_namespace(event.event_type)})
+                server_list_cs['on'].append({'func': 'on' + service_name + event.name, 'message': fix_namespace(event.event_type)})
+                client_list['do'].append({'func': 'do' + service_name + event.name, 'message': transfer_namespace(event.event_type)})
+                client_list_cs['do'].append({'func': 'do' + service_name + event.name, 'message': fix_namespace(event.event_type)})
+            else:
+                server_list['do'].append({'func': 'do' + service_name + event.name, 'message': transfer_namespace(event.event_type)})
+                server_list_cs['do'].append({'func': 'do' + service_name + event.name, 'message': fix_namespace(event.event_type)})
+                client_list['on'].append({'func': 'on' + service_name + event.name, 'message': transfer_namespace(event.event_type)})
+                client_list_cs['on'].append({'func': 'on' + service_name + event.name, 'message': fix_namespace(event.event_type)})
 
-        out = Writer()
-        gen_by_file(out, name, service_name, 'client', 'cc', service_list, 'Reply', 'Request')
-        files_[out.getkey()] = out.getvalue()
+    out = Writer()
+    gen_by_file(out, name, package, 'client', 'h', client_list)
+    files_[out.getkey()] = out.getvalue()
 
-        out = Writer()
-        gen_by_file(out, name, service_name, 'server', 'h', service_list, 'Request', 'Reply')
-        files_[out.getkey()] = out.getvalue()
+    out = Writer()
+    gen_by_file(out, name, package, 'client', 'cc', client_list)
+    files_[out.getkey()] = out.getvalue()
 
-        out = Writer()
-        gen_by_file(out, name, service_name, 'server', 'cc', service_list, 'Request', 'Reply')
-        files_[out.getkey()] = out.getvalue()
+    out = Writer()
+    gen_by_file(out, name, package, 'server', 'h', server_list)
+    files_[out.getkey()] = out.getvalue()
+
+    out = Writer()
+    gen_by_file(out, name, package, 'server', 'cc', server_list)
+    files_[out.getkey()] = out.getvalue()
+
+    out = Writer()
+    gen_by_file(out, name, package, 'client', 'cs', client_list_cs)
+    files_[out.getkey()] = out.getvalue()
+
+    out = Writer()
+    gen_by_file(out, name, package, 'server', 'cs', server_list_cs)
+    files_[out.getkey()] = out.getvalue()
 
 
 def main():
